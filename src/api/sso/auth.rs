@@ -35,6 +35,41 @@ impl super::SsoApi {
         Ok(())
     }
 
+    /// Opens a CAS service using the current cookies, submitting its SSO form if required.
+    /// The caller validates the final destination and extracts its service credentials.
+    pub(crate) async fn get_cas_service(&self, url: &str) -> crate::Result<Response> {
+        let get = || async {
+            let response = self
+                .client
+                .get(url)
+                .send()
+                .await
+                .and_then(Response::error_for_status)
+                .map_err(reqwest::Error::without_url)?;
+            if response.status().is_success() {
+                Ok(response)
+            } else {
+                Err(Error::server("Unexpected CAS response status").with_label("Sso"))
+            }
+        };
+
+        let response = get().await?;
+        if !is_direct_login_url(response.url()) {
+            return Ok(response);
+        }
+
+        let login_url = response.url().clone();
+        self.submit_login_form(response, login_url.as_str()).await?;
+
+        let response = get().await?;
+        if is_direct_login_url(response.url()) {
+            return Err(
+                Error::auth("SSO login required after refreshing session").with_label("Sso")
+            );
+        }
+        Ok(response)
+    }
+
     async fn login_inner(&self, login_url: &str, verify_url: &str) -> crate::Result<()> {
         // 检查登录有效性
         let res = self.client.get(login_url).send().await?;
@@ -44,7 +79,10 @@ impl super::SsoApi {
             return Ok(());
         }
 
-        // 重新登录
+        self.submit_login_form(res, login_url).await
+    }
+
+    async fn submit_login_form(&self, res: Response, login_url: &str) -> crate::Result<()> {
         let req = self.prepare_login(res, login_url).await?;
         // 返回 None 代表正常或符合假设, 返回 Some 代表非 2xx 响应, 可能代表账号有风险, 需要尝试忽略风险登录
         let Some(res) = self.finish_login(req).await? else {
@@ -203,6 +241,10 @@ impl super::SsoApi {
         // 如果响应失败, 将响应交给外部处理, 一般是 401 错误
         Ok(Some(res))
     }
+}
+
+fn is_direct_login_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https" && url.host_str() == Some("sso.buaa.edu.cn") && url.path() == "/login"
 }
 
 /// 解析登录页 execution 值

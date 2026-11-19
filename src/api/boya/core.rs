@@ -18,15 +18,11 @@ Qo6ENA31k5/tYCLEXgjPbEjCK9spiyB62fCT6cqOhbamJB0lcDJRO6Vo1m3dy+fD
 impl super::BoyaApi {
     /// # Login to BoyaApi
     pub async fn login(&self) -> crate::Result<()> {
-        if self.cred.load().is_expired::<Sso>() {
-            self.api::<Sso>().login().await?;
-        }
-
         // TODO: VPN 方法使用下面的 URL, 但我还没想好怎么分组
         // https://d.buaa.edu.cn/https/77726476706e69737468656265737421f2ee4a9f69327d517f468ca88d1b203b/sscv/cas/login
         let login_url = "https://sso.buaa.edu.cn/login?noAutoRedirect=true&service=https%3A%2F%2Fbykc.buaa.edu.cn%2Fsscv%2Fcas%2Flogin";
         // 获取 JSESSIONID
-        let res = self.client.get(login_url).send().await?;
+        let res = self.api::<Sso>().get_cas_service(login_url).await?;
 
         // 从重定向 URL 中获取 token
         let url = res.url().as_str();
